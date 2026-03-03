@@ -40,7 +40,7 @@ use lora_phy::lorawan_radio::LorawanRadio;
 use static_cell::StaticCell;
 
 const LORAWAN_REGION: region::Region = region::Region::EU868;
-const MAX_TX_POWER: u8 = 14;
+const MAX_TX_POWER: u8 = 22;
 
 static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, esp_hal::spi::master::Spi<'static, Async>>> =
     StaticCell::new();
