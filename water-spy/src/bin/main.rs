@@ -3,17 +3,13 @@
 #![no_std]
 #![no_main]
 
+use bitfields::bitfield;
 use defmt::{info,error};
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex};
 use embassy_sync::mutex::Mutex;
-use embassy_time::Delay;
-use embassy_time::{Duration, Instant};
-use esp_hal::gpio::Input;
-use esp_hal::gpio::InputConfig;
-use esp_hal::gpio::Level;
-use esp_hal::gpio::Output;
-use esp_hal::gpio::OutputConfig;
+use embassy_time::{Delay,Duration,Instant, Ticker};
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::{
     Async,
     clock::CpuClock,
@@ -42,10 +38,28 @@ use static_cell::StaticCell;
 const LORAWAN_REGION: region::Region = region::Region::EU868;
 const MAX_TX_POWER: u8 = 22;
 
+// Bitbang water meter IF
+type WsReader = Mutex<CriticalSectionRawMutex, Option<(Output<'static>,Input<'static>,[u8;200])>>;
+static WS_READER: WsReader = Mutex::new(None);
+
 static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, esp_hal::spi::master::Spi<'static, Async>>> =
     StaticCell::new();
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+#[bitfield(u16)]
+struct WsSymbol {
+    #[bits(6)]
+    _pad: u8,
+    #[bits(1)]
+    start: u8,
+    #[bits(7)]
+    d: u8,
+    #[bits(1)]
+    p: u8,
+    #[bits(1)]
+    stop: u8
+}
 
 struct LWTimer{
     start: Instant,
@@ -77,20 +91,92 @@ impl Timer for LWTimer {
     }
 }
 
+enum SStatus {
+    Wait,
+    Start,
+    Parity
+}
+
+#[embassy_executor::task(pool_size = 2)]
+async fn check_ws(ws_reader: &'static WsReader) {
+    // Runs double the actual bus speed to get two toggles per symbol
+    let mut ticker = Ticker::every(Duration::from_hz(4800)); 
+    let mut c = 0usize;
+    let mut status = SStatus::Wait;
+    let mut s = 0u8;
+    let mut b = 0u8;    
+
+    loop {
+        let mut unlocked = ws_reader.lock().await;
+        if let Some((clk,
+                     dio,
+                     rdr_buf)) = unlocked.as_mut() {
+            clk.toggle();
+
+            if clk.is_set_high() {
+                match status {
+                    SStatus::Wait => {
+                        if dio.is_low() {
+                            status = SStatus::Start;
+                        }
+                    },
+                    SStatus::Start => {
+                        // FIXME: This is very late night code and could do with refactoring
+                        s |= (dio.is_high() as u8 ) << b;
+                        b += 1;
+
+                        if b == 7 {
+                            rdr_buf[c] = s;
+                            b = 0;
+                            s = 0;
+                            status = SStatus::Parity;
+
+                        }
+                    },
+                    SStatus::Parity => {
+                        status = SStatus::Wait;
+                        c += 1;
+                        if c > rdr_buf.len() - 1 {
+                            if let Ok(s) = str::from_utf8(rdr_buf)
+                            {
+                                // FIXME: This needs tidying up
+                                let mut chunks = s.split('\r').next().unwrap().split(';');
+                                chunks.next().unwrap();
+                                let reading: u32 = chunks.next().unwrap()[2..].parse().unwrap();
+                                let serial = chunks.next().unwrap();
+                                info!("Read from meter: \n\tReading: {:06}m³\n\tSerial: 20{}",
+                                    reading, serial[2..]
+                                );
+                            }
+                            clk.toggle();
+                            break;
+                        }
+                    }
+                }
+                
+            }
+        }
+        ticker.next().await;
+    }
+}
+
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
+    let ws_reader_buf = [0u8;200];
+
     // Set up ESP32
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let timer_group = TimerGroup::new(peripherals.TIMG0);
 
     esp_rtos::start(timer_group.timer1);
 
-    // Initialize SPI
+    // Initialize LoRa SPI for Driver
     let nss = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
     let sclk = peripherals.GPIO9;
     let mosi = peripherals.GPIO10;
     let miso = peripherals.GPIO11;
 
+    // Init LoRa IC control signals
     let reset = Output::new(peripherals.GPIO12, Level::Low, OutputConfig::default());
     let busy = Input::new(peripherals.GPIO13, InputConfig::default());
     let dio1 = Input::new(peripherals.GPIO14, InputConfig::default());
@@ -129,9 +215,20 @@ async fn main(_spawner: Spawner) {
     let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
     let mut device: Device<_, DefaultFactory, _, _> = Device::new(region, radio, LWTimer::new(), Rng::new());
 
+    // Init secondary SPI for meter reading
+    // let ws_cs = Output::new(peripherals.GPIO34, Level::High, OutputConfig::default());
+    let ws_clk = Output::new(peripherals.GPIO46, Level::High, OutputConfig::default());
+    let ws_dio = Input::new(peripherals.GPIO45, InputConfig::default());
+    {
+        *(WS_READER.lock().await) = Some((ws_clk,ws_dio, ws_reader_buf));
+    }
+    
+    // let ws_miso = peripherals.GPIO35;
+
     defmt::info!("Joining LoRaWAN network");
 
     loop {
+        let _wspy = spawner.spawn(check_ws(&WS_READER));
         // TODO: Adjust the EUI and Keys according to your network credentials
         if let Ok(resp) = device
             .join(&JoinMode::OTAA {

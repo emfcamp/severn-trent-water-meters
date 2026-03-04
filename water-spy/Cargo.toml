@@ -5,6 +5,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+bitfields = "1.0.2"
 defmt = "1"
 defmt-rtt = "1"
 micropb = "0.6"
@@ -12,7 +13,7 @@ embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
 embassy-executor = "0.9"
 embedded-hal-async = "1.0.0"
 embedded-hal-bus = "0.3"
-embassy-sync = "0.7"
+embassy-sync = "0.7.2"
 embassy-time = { version = "0.5.0", features = ["generic-queue-64", "defmt-timestamp-uptime"] }
 esp-hal = { version = "1.0.0",features = ["esp32s3", "defmt", "unstable"] }
 esp-rtos = { version = "0.2",features = ["embassy", "defmt", "esp32s3"] }
@@ -22,7 +23,7 @@ lorawan-device = { version="0.12.2",features = ["defmt", "default-crypto"] }
 static_cell = "2.1.0"
 esp-bootloader-esp-idf = { version = "^0.4.0", features = ["defmt", "esp32s3"] }
 [profile.release]
-debug = 2
+debug = "full"
 
 [build-dependencies]
 embuild = "0.33"
