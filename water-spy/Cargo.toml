@@ -9,19 +9,19 @@ bitfields = "1.0.2"
 defmt = "1"
 defmt-rtt = "1"
 micropb = "0.6"
-embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
-embassy-executor = "0.9"
+embassy-embedded-hal = { version = "0.6.0", features = ["defmt"] }
+embassy-executor = "0.10"
 embedded-hal-async = "1.0.0"
 embedded-hal-bus = "0.3"
-embassy-sync = "0.7.2"
+embassy-sync = { version = "0.8.0"}
 embassy-time = { version = "0.5.0", features = ["generic-queue-64", "defmt-timestamp-uptime"] }
-esp-hal = { version = "1.0.0",features = ["esp32s3", "defmt", "unstable"] }
-esp-rtos = { version = "0.2",features = ["embassy", "defmt", "esp32s3"] }
-esp-println = { version = "0.16.1",features = ["esp32s3", "defmt-espflash"] }
+esp-hal = { version = "1.1.1",features = ["esp32s3", "defmt", "unstable"] }
+esp-rtos = { version = "0.3",features = ["embassy", "defmt", "esp32s3"] }
+esp-println = { version = "0.17.0",features = ["esp32s3", "defmt-espflash"] }
 lora-phy = { version = "3.0.1", features = ["lorawan-radio"]}
 lorawan-device = { version="0.12.2",features = ["defmt", "default-crypto"] }
 static_cell = "2.1.0"
-esp-bootloader-esp-idf = { version = "^0.4.0", features = ["defmt", "esp32s3"] }
+esp-bootloader-esp-idf = { version = "^0.5.0", features = ["defmt", "esp32s3"] }
 [profile.release]
 debug = "full"
 

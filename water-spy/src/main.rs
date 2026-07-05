@@ -34,6 +34,7 @@ use lorawan_device::default_crypto::DefaultFactory;
 use lorawan_device::{AppEui, AppKey, DevEui};
 use lora_phy::lorawan_radio::LorawanRadio;
 use static_cell::StaticCell;
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 
 const LORAWAN_REGION: region::Region = region::Region::EU868;
 const MAX_TX_POWER: u8 = 22;
@@ -139,10 +140,12 @@ async fn check_ws(ws_reader: &'static WsReader) {
                         if c > rdr_buf.len() - 1 {
                             if let Ok(s) = str::from_utf8(rdr_buf)
                             {
+                                info!("{}",&s);
                                 // FIXME: This needs tidying up
                                 let mut chunks = s.split('\r').next().unwrap().split(';');
                                 chunks.next().unwrap();
-                                let reading: u32 = chunks.next().unwrap()[2..].parse().unwrap();
+                                let reading: u32 = chunks.next().expect("Failed to get next reading chunk")[2..]
+                                    .parse().expect("Failed to collect reading");
                                 let serial = chunks.next().unwrap();
                                 info!("Read from meter: \n\tReading: {:06}m³\n\tSerial: 20{}",
                                     reading, serial[2..]
@@ -168,7 +171,8 @@ async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let timer_group = TimerGroup::new(peripherals.TIMG0);
 
-    esp_rtos::start(timer_group.timer1);
+    let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timer_group.timer0, software_interrupt.software_interrupt0);
 
     // Initialize LoRa SPI for Driver
     let nss = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
@@ -216,19 +220,16 @@ async fn main(spawner: Spawner) {
     let mut device: Device<_, DefaultFactory, _, _> = Device::new(region, radio, LWTimer::new(), Rng::new());
 
     // Init secondary SPI for meter reading
-    // let ws_cs = Output::new(peripherals.GPIO34, Level::High, OutputConfig::default());
-    let ws_clk = Output::new(peripherals.GPIO46, Level::High, OutputConfig::default());
-    let ws_dio = Input::new(peripherals.GPIO45, InputConfig::default());
+    let ws_clk = Output::new(peripherals.GPIO45, Level::High, OutputConfig::default());
+    let ws_dio = Input::new(peripherals.GPIO46, InputConfig::default());
     {
         *(WS_READER.lock().await) = Some((ws_clk,ws_dio, ws_reader_buf));
     }
-    
-    // let ws_miso = peripherals.GPIO35;
 
     defmt::info!("Joining LoRaWAN network");
 
     loop {
-        let _wspy = spawner.spawn(check_ws(&WS_READER));
+        let _wspy = spawner.spawn(check_ws(&WS_READER).expect("Failed to check ws"));
         // TODO: Adjust the EUI and Keys according to your network credentials
         if let Ok(resp) = device
             .join(&JoinMode::OTAA {
